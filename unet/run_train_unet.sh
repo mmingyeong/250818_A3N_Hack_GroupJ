@@ -92,6 +92,8 @@ for EXP in $EXP_LIST; do
         --lr "$LR"
         --seed "$SEED"
         --device "$DEVICE"
+        --patience 20 
+        --min_delta 1e-3
       )
 
   echo "▶ ${CMD[*]}"

@@ -13,6 +13,32 @@ from tqdm import tqdm
 from model import UNetEncoderRegressor
 from data_loader import CAMELSDataset
 
+# ---------------------------
+# Early Stopping 클래스
+# ---------------------------
+class EarlyStopping:
+    """Stop training when validation loss does not improve after patience epochs."""
+    def __init__(self, patience=10, min_delta=0.0):
+        """
+        patience: 몇 epoch 기다릴지
+        min_delta: 최소 개선 폭
+        """
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = float("inf")
+        self.early_stop = False
+
+    def __call__(self, val_loss: float) -> bool:
+        if val_loss < self.best_loss - self.min_delta:
+            self.best_loss = val_loss
+            self.counter = 0
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+        return self.early_stop
+
 
 # ---------------------------
 # Logging 설정
@@ -107,6 +133,9 @@ def train(args):
     best_model_path = os.path.join(args.save_dir, "best_model.pt")
     final_model_path = os.path.join(args.save_dir, "final_model.pt")
 
+    # Early stopping 객체 생성
+    early_stopper = EarlyStopping(patience=args.patience, min_delta=args.min_delta)
+
     # 학습 루프
     for epoch in range(args.epochs):
         model.train()
@@ -162,6 +191,12 @@ def train(args):
             f"| LR: {current_lr:.2e}"
         )
 
+        # Early stopping 체크
+        if early_stopper(avg_val_loss):
+            logger.info(f"⏹️ Early stopping triggered at epoch {epoch+1}")
+            break
+
+
     # Final model 저장
     torch.save(model.state_dict(), final_model_path)
     logger.info(f"📦 Final model saved: {final_model_path}")
@@ -185,6 +220,8 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--patience", type=int, default=10, help="Early stopping patience (epochs)")
+    parser.add_argument("--min_delta", type=float, default=1e-4, help="Minimum improvement in val_loss to reset patience")
 
     args = parser.parse_args()
     train(args)
