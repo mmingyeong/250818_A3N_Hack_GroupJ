@@ -1,3 +1,4 @@
+
 import argparse
 import os
 import csv
@@ -13,16 +14,12 @@ from tqdm import tqdm
 from model import UNetEncoderRegressor
 from data_loader import CAMELSDataset
 
+
 # ---------------------------
 # Early Stopping 클래스
 # ---------------------------
 class EarlyStopping:
-    """Stop training when validation loss does not improve after patience epochs."""
     def __init__(self, patience=10, min_delta=0.0):
-        """
-        patience: 몇 epoch 기다릴지
-        min_delta: 최소 개선 폭
-        """
         self.patience = patience
         self.min_delta = min_delta
         self.counter = 0
@@ -58,14 +55,12 @@ def setup_logger(log_file=None):
     return logging.getLogger("train")
 
 
-
 # ---------------------------
 # Training 함수
 # ---------------------------
 def train(args):
     logger = setup_logger(os.path.join(args.save_dir, "train.log"))
 
-    # Seed 고정
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
@@ -74,66 +69,75 @@ def train(args):
         logger.info(f"   {k}: {v}")
 
     # --- 데이터 로드 ---
-    params = np.loadtxt(args.params_path)   # (1000, 6) 혹은 (6, 1000)
-    imgs = np.load(args.imgs_path)          # (15000, 256, 256) 또는 (1000, 15, 256, 256)
+    # --- 데이터 로드 ---
+    # 무조건 리스트로 통일
+    imgs_paths = args.imgs_path.split(",")
+    imgs_paths = [p.strip() for p in imgs_paths if p.strip()]
 
-    # params shape 보정 (파일에 따라 (6, N)인 경우 존재)
+    params = np.loadtxt(args.params_path)
+
+    imgs_list = []
+    for p in imgs_paths:
+        if not os.path.exists(p):
+            raise FileNotFoundError(f"❌ File not found: {p}")
+        arr = np.load(p)
+        # reshape check
+        if arr.ndim == 3 and arr.shape[0] % 15 == 0:
+            n_sims = arr.shape[0] // 15
+            arr = arr.reshape(n_sims, 15, arr.shape[1], arr.shape[2])
+        imgs_list.append(arr.astype(np.float32, copy=False))
+
+    # param shape 보정
     if params.ndim != 2:
         raise ValueError(f"params must be 2D, got {params.shape}")
-    if params.shape[0] != imgs.shape[0] and params.shape[1] == imgs.shape[0]:
+    if params.shape[0] != imgs_list[0].shape[0] and params.shape[1] == imgs_list[0].shape[0]:
         params = params.T
 
-    # ---- 채널 축 복원 로직 ----
-    # Case A: (N, 15, 256, 256) 이미 정상
-    if imgs.ndim == 4 and imgs.shape[1] == 15:
-        logger.info(f"🟢 Detected shape with channels: imgs={imgs.shape}")
-    # Case B: (15000, 256, 256) 처럼 채널 축이 빠진 경우 → (1000, 15, 256, 256)로 복원
-    elif imgs.ndim == 3 and imgs.shape[0] % 15 == 0:
-        n_sims = imgs.shape[0] // 15
-        imgs = imgs.reshape(n_sims, 15, imgs.shape[1], imgs.shape[2])
-        logger.info(f"🔧 Reshaped imgs to {imgs.shape} (assumed 15 maps per simulation)")
-    else:
-        raise ValueError(f"❌ Unexpected imgs shape: {imgs.shape}. "
-                        f"Expected (N,15,H,W) or (N*15,H,W).")
+    for arr in imgs_list:
+        if arr.shape[0] != params.shape[0]:
+            raise ValueError(f"❌ Count mismatch: imgs={arr.shape[0]} vs params={params.shape[0]}")
 
-    # 이제 imgs.shape[0] == params.shape[0] 여야 함
-    if params.shape[0] != imgs.shape[0]:
-        raise ValueError(f"❌ Count mismatch after reshape: imgs={imgs.shape[0]} vs params={params.shape[0]}")
+    logger.info(f"📂 Final dataset view: {[a.shape for a in imgs_list]}, params={params.shape}")
 
-    # (선택) dtype 정리
-    imgs = imgs.astype(np.float32, copy=False)
-    params = params.astype(np.float32, copy=False)
+    # Train/Val/Test split index
+    n_total = len(params)
+    train_idx, test_idx = train_test_split(np.arange(n_total), test_size=0.2, random_state=args.seed)
+    train_idx, val_idx = train_test_split(train_idx, test_size=0.25, random_state=args.seed)
 
-    logger.info(f"📂 Final dataset view: imgs={imgs.shape}, params={params.shape}")
+    def make_subset(idxs):
+        param_mode = "2params" if args.out_dim == 2 else "6params"
+        if len(imgs_list) == 1:
+            return CAMELSDataset(imgs_list[0][idxs], params[idxs], mode=param_mode)
+        else:
+            maps = tuple(arr[idxs] for arr in imgs_list)
+            return CAMELSDataset(maps, params[idxs], mode=param_mode)
 
-
-    # Train/Validation/Test split
-    train_idx, test_idx = train_test_split(np.arange(len(imgs)), test_size=0.2, random_state=args.seed)
-    train_idx, val_idx = train_test_split(train_idx, test_size=0.25, random_state=args.seed)  # 0.25*0.8=0.2
-
-    train_dataset = CAMELSDataset(imgs[train_idx], params[train_idx])
-    val_dataset = CAMELSDataset(imgs[val_idx], params[val_idx])
-    test_dataset = CAMELSDataset(imgs[test_idx], params[test_idx])
+    train_dataset = make_subset(train_idx)
+    val_dataset   = make_subset(val_idx)
+    test_dataset  = make_subset(test_idx)
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+    val_loader   = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    test_loader  = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
     logger.info(f"📊 Dataset split: train={len(train_dataset)}, val={len(val_dataset)}, test={len(test_dataset)}")
 
     # 모델 초기화
-    model = UNetEncoderRegressor(in_channels=15, out_dim=2).to(args.device)
+    # 모델 초기화
+    model = UNetEncoderRegressor(
+        in_channels=15,
+        out_dim=args.out_dim,   # ✅ argparse 값 사용
+        mode=args.mode,
+        fusion=args.fusion
+    ).to(args.device)
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     log_records = []
-
     best_val_loss = float("inf")
     os.makedirs(args.save_dir, exist_ok=True)
     best_model_path = os.path.join(args.save_dir, "best_model.pt")
     final_model_path = os.path.join(args.save_dir, "final_model.pt")
-
-    # Early stopping 객체 생성
     early_stopper = EarlyStopping(patience=args.patience, min_delta=args.min_delta)
 
     # 학습 루프
@@ -141,8 +145,14 @@ def train(args):
         model.train()
         train_loss = 0
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.epochs} - Training", leave=False)
-        for batch_idx, (X, y) in enumerate(pbar):
-            X, y = X.to(args.device), y.to(args.device)
+        for X, y in pbar:
+            if args.mode == "single":
+                X = X.to(args.device)
+            else:
+                # multi → list of tensors
+                X = [m.to(args.device) for m in X]
+            y = y.to(args.device)
+
             optimizer.zero_grad()
             preds = model(X)
             loss = criterion(preds, y)
@@ -159,7 +169,11 @@ def train(args):
         with torch.no_grad():
             pbar_val = tqdm(val_loader, desc=f"Epoch {epoch+1}/{args.epochs} - Validation", leave=False)
             for X, y in pbar_val:
-                X, y = X.to(args.device), y.to(args.device)
+                if args.mode == "single":
+                    X = X.to(args.device)
+                else:
+                    X = [m.to(args.device) for m in X]
+                y = y.to(args.device)
                 preds = model(X)
                 loss = criterion(preds, y)
                 val_loss += loss.item()
@@ -167,10 +181,8 @@ def train(args):
 
         avg_val_loss = val_loss / len(val_loader)
 
-        # 현재 LR 가져오기
         current_lr = optimizer.param_groups[0]["lr"]
 
-        # 로그 기록
         log_records.append({
             "epoch": epoch + 1,
             "train_loss": avg_train_loss,
@@ -178,7 +190,6 @@ def train(args):
             "lr": current_lr
         })
 
-        # Best model 저장
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             torch.save(model.state_dict(), best_model_path)
@@ -191,11 +202,9 @@ def train(args):
             f"| LR: {current_lr:.2e}"
         )
 
-        # Early stopping 체크
         if early_stopper(avg_val_loss):
             logger.info(f"⏹️ Early stopping triggered at epoch {epoch+1}")
             break
-
 
     # Final model 저장
     torch.save(model.state_dict(), final_model_path)
@@ -213,7 +222,8 @@ def train(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train UNetEncoderRegressor on CAMELS maps")
     parser.add_argument("--params_path", type=str, required=True, help="Path to params file")
-    parser.add_argument("--imgs_path", type=str, required=True, help="Path to images file")
+    parser.add_argument("--imgs_path", type=str, required=True,
+                        help="Path(s) to images file(s). If multi mode, use comma-separated list")
     parser.add_argument("--save_dir", type=str, default="./checkpoints", help="Directory to save models and logs")
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
@@ -222,6 +232,16 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--patience", type=int, default=10, help="Early stopping patience (epochs)")
     parser.add_argument("--min_delta", type=float, default=1e-4, help="Minimum improvement in val_loss to reset patience")
+    parser.add_argument("--mode", type=str, default="single", choices=["single", "multi"],
+                        help="Experiment mode: single or multi")
+    parser.add_argument("--fusion", type=str, default="concat", choices=["concat", "mean", "sum"],
+                        help="Fusion method for multi mode")
+
+    # ✅ 새 인자 추가
+    parser.add_argument("--out_dim", type=int, default=2, choices=[2, 6],
+                        help="Number of cosmological parameters to predict")
+    parser.add_argument("--param_names", type=str, default=None,
+                        help="Comma-separated list of parameter names (must match out_dim)")
 
     args = parser.parse_args()
     train(args)
