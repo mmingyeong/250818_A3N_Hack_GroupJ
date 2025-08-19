@@ -1,0 +1,60 @@
+# ==========================
+# Data
+# ==========================
+data/
+*.npy
+*.npz
+*.csv
+*.h5
+*.hdf5
+
+# ==========================
+# Logs
+# ==========================
+*.log
+logs/
+log/
+*/logs/
+*/log/
+
+# ==========================
+# Model checkpoints
+# ==========================
+*.pt
+*.pth
+*.ckpt
+
+# ==========================
+# Experiment outputs
+# ==========================
+runs/
+checkpoints/
+predictions/
+outputs/
+
+# ==========================
+# Python cache / env
+# ==========================
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+.venv/
+env/
+venv/
+
+# ==========================
+# IDE / System files
+# ==========================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ==========================
+# Environment / packaging
+# ==========================
+*.egg-info/
+*.egg
+dist/
+build/
