@@ -48,10 +48,12 @@ TRAIN_PY="/home/users/mmingyeong/250818_a3net/unet/train.py"   # single-mode tra
 DATA_ROOT="/caefs/user/mmingyeong/250818_a3net/data/CAMELS_multifield"
 
 SEED="${SEED:-42}"
-EPOCHS="${EPOCHS:-5}"         # 테스트: 5 epoch
+EPOCHS="${EPOCHS:-100}"         # 테스트: 5 epoch
 BATCH_SIZE="${BATCH_SIZE:-16}"
 LR="${LR:-1e-4}"
 DEVICE="${DEVICE:-cuda}"
+PATIENCE="${PATIENCE:-10}"
+MIN_DELTA="${MIN_DELTA:-1e-4}"
 
 # -----------------------------
 # 입력 4종 (단일 맵만)
@@ -101,8 +103,8 @@ for INPUT_KEY in SIMBA_Mtot TNG_Mtot SIMBA_P TNG_P; do
           --lr "$LR"
           --seed "$SEED"
           --device "$DEVICE"
-          --patience 3
-          --min_delta 1e-3
+          --patience "$PATIENCE"
+          --min_delta "$MIN_DELTA"
         )
 
     # --out_dim / --param_names 추가
