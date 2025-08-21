@@ -68,36 +68,29 @@ def train(args):
     for k, v in vars(args).items():
         logger.info(f"   {k}: {v}")
 
-    # --- 데이터 로드 ---
-    # --- 데이터 로드 ---
-    # 무조건 리스트로 통일
+    # params concat
+    params_paths = args.params_path.split(",")
+    params = np.concatenate([np.loadtxt(p) for p in params_paths], axis=0)
+
+    # imgs concat
     imgs_paths = args.imgs_path.split(",")
-    imgs_paths = [p.strip() for p in imgs_paths if p.strip()]
-
-    params = np.loadtxt(args.params_path)
-
     imgs_list = []
     for p in imgs_paths:
-        if not os.path.exists(p):
-            raise FileNotFoundError(f"❌ File not found: {p}")
         arr = np.load(p)
-        # reshape check
         if arr.ndim == 3 and arr.shape[0] % 15 == 0:
             n_sims = arr.shape[0] // 15
             arr = arr.reshape(n_sims, 15, arr.shape[1], arr.shape[2])
         imgs_list.append(arr.astype(np.float32, copy=False))
 
-    # param shape 보정
-    if params.ndim != 2:
-        raise ValueError(f"params must be 2D, got {params.shape}")
-    if params.shape[0] != imgs_list[0].shape[0] and params.shape[1] == imgs_list[0].shape[0]:
-        params = params.T
+    imgs = np.concatenate(imgs_list, axis=0)
 
-    for arr in imgs_list:
-        if arr.shape[0] != params.shape[0]:
-            raise ValueError(f"❌ Count mismatch: imgs={arr.shape[0]} vs params={params.shape[0]}")
+    # 검증
+    if imgs.shape[0] != params.shape[0]:
+        raise ValueError(f"❌ Count mismatch: imgs={imgs.shape[0]} vs params={params.shape[0]}")
 
-    logger.info(f"📂 Final dataset view: {[a.shape for a in imgs_list]}, params={params.shape}")
+    logger.info(f"📂 Final dataset shape: imgs={imgs.shape}, params={params.shape}")
+
+
 
     # Train/Val/Test split index
     n_total = len(params)
@@ -106,11 +99,8 @@ def train(args):
 
     def make_subset(idxs):
         param_mode = "2params" if args.out_dim == 2 else "6params"
-        if len(imgs_list) == 1:
-            return CAMELSDataset(imgs_list[0][idxs], params[idxs], mode=param_mode)
-        else:
-            maps = tuple(arr[idxs] for arr in imgs_list)
-            return CAMELSDataset(maps, params[idxs], mode=param_mode)
+        return CAMELSDataset(imgs[idxs], params[idxs], mode=param_mode)
+
 
     train_dataset = make_subset(train_idx)
     val_dataset   = make_subset(val_idx)
