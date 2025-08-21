@@ -58,3 +58,14 @@ Thumbs.db
 *.egg
 dist/
 build/
+
+# from the repository root
+printf '\n# Ignore large data folder\nhands_on/\n' >> .gitignore
+git add .gitignore
+
+# stop tracking already-added files in that folder (keep them on disk)
+git rm -r --cached hands_on/
+git commit -m "Ignore hands_on/ and remove it from the index"
+
+# Large data (ignore)
+hands_on/
